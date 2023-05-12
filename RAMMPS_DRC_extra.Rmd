@@ -1,0 +1,1252 @@
+---
+title: "DRC_JunJul"
+author: "Kelly McCain"
+date: '2022-07-18'
+output: html_document
+---
+
+```{r setup, include=FALSE, warnings = FALSE}
+# Load in packages
+pkgs <- c('plyr','tidyverse', 'plotrix','lubridate','kableExtra','hrbrthemes','ggplot2','extrafont','float','reshape','gridExtra','rsvg','png','devtools','readxl','date', 'ggpubr', 'tidyselect', 'httr', 'jsonlite', 'extrafont', 'tidyr','broom')
+lapply(pkgs, require, character.only = TRUE)
+  
+extrafont::loadfonts(device = "pdf", quiet = TRUE)
+`%notin%` <- Negate(`%in%`)
+theme_set(theme_minimal())
+```
+
+
+```{r readindata, include=FALSE, warning = FALSE}
+dir.inputdata <- paste0(Sys.getenv('USERPROFILE'),"/OneDrive - London School of Hygiene and Tropical Medicine/Documents/General/Partners/UNIKIN/SurveyCTO Audits/")
+
+r.functions.dir <- paste0(Sys.getenv('USERPROFILE'),'/London School of Hygiene and Tropical Medicine/rammps/')
+dir.gen <- paste0(Sys.getenv('USERPROFILE'),"/OneDrive - London School of Hygiene and Tropical Medicine/Documents/General/Partners/UNIKIN/IVR Numbers/")
+    
+data_raw <- read.csv(paste0(dir.inputdata,"RAMMPS DRC 20_07_WIDE.csv"))
+```
+
+```{r readindata2, include=FALSE, warning = FALSE}
+# Load in IVR numbers
+ivr <- read.csv(paste0(dir.gen,"engageSPARK_contacts_ALL_20211021.csv")) %>%
+    dplyr::select(c(Phone.Number, Province)) %>%
+    mutate(Province = ifelse(Province == '1'|Province=='Kinshasa', 'Kinshasa',
+                             ifelse(Province =='2'|Province=='Nord Kivu', 'Nord Kivu',
+                                    ifelse(Province == 'Other Province','Other Province',NA))),
+           source = ifelse(is.na(Province) | Province == 'Other Province','IVR group 2', 'IVR group 1'),
+           Phone.Number = as.numeric(substring(Phone.Number, 4))) %>%
+    dplyr::rename(phone_1 = Phone.Number)
+
+feroxus <- read.csv(paste0(dir.gen, 'FeroxusNumbers.csv'))
+```
+
+
+```{r readindata3, include=FALSE, warning = FALSE}
+getdata <- dget(paste0(r.functions.dir,'RAMMPS_DRCDashboard/CleaningScript_func.R'))
+listdfs<- getdata(data_raw, feroxus, ivr)
+```
+
+```{r readindata4, include=FALSE, warning = FALSE}
+Consented <- listdfs[[1]] %>%# Consented 
+  arrange(Date.Interview) %>%
+  filter(Date.Interview > '2022-06-01')
+data <- listdfs[[2]] # data_essential3
+dat.wide <- listdfs[[3]] %>%#dat.wide 
+  filter(time < '2022-06-01')
+ #rm(data_raw)
+
+data <- data %>%
+  dplyr::filter(call_num <6 & call_num>0) %>%
+  dplyr::filter(!is.na(Outcome2))%>%
+  filter(Date.Interview > '2022-06-01')
+
+#Dividing into two provinces
+NK <- Consented[which(Consented$Resp.Region==2),]
+Kin <- Consented[which(Consented$Resp.Region==1),]
+```
+
+
+
+```{r Completedbydate, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 6, fig.width = 12, fig.align = "center"}
+# === Obtain vector of Counts, Cumulative totalss and dates for number of interviews per day
+# --- Count the number of interviews on every unique interview date + cumulative
+Counts <- aggregate(data.frame(count = Consented$Date.Interview), 
+                    list(value = Consented$Date.Interview), 
+                    length)[,2]  
+Cumulative <- cumsum(Counts); Date <- unique(Consented$Date.Interview) 
+
+# --- Put into a dataframe and reshape to obtain plotable data
+plot.tab <- data.frame(Counts=Counts, Cumulative=Cumulative, Date= Date) %>%
+  mutate(Date = as.Date(Date)) %>%
+  arrange(Date) 
+ggplot(data = plot.tab) +
+  geom_bar(aes(x=Date, y=Counts), stat="identity", fill='#D95F02',color="black") +
+  geom_text(aes(x=Date, y=Counts, label=Counts), vjust=1.6, color="black", size=3.5)+
+  theme_minimal() +
+  xlab("Date") + ylab("Completed Interviews") +
+  geom_line(aes(x = Date, y=Cumulative/10), group =1,colour="#1B9E77", size = 1) +
+  geom_text(data = plot.tab[which.max(plot.tab[,"Date"]),],aes(x = Date, y = Cumulative/10, label=Cumulative), size=4, hjust = -.1)+
+  scale_y_continuous(
+    name = "Daily Completed interviews",
+    sec.axis = sec_axis( trans=~.*10, name="Cumulative Completed interviews"))+
+  scale_x_date(date_breaks = '2 days') +
+  theme(axis.title.y = element_text(color = '#D95F02', size=13),
+        axis.title.y.right = element_text(color = "#1B9E77", size=13),
+        axis.text.x = element_text(angle = 90)
+  )
+```
+
+```{r,  quotas3, warning = FALSE, message = FALSE,echo = FALSE}
+# #matrix for block 2 of quota %
+# # --- Create a table of Age vs sex by region and then proportions
+block3 <- Consented %>%
+  filter(Date.Interview > '2022-06-01')
+quota.count3 <- table(block3$Resp.Age.grp,
+                     block3$Resp.Sex,
+                     block3$Resp.Region)
+quota.prop3 <- round(prop.table(table(block3$Resp.Age.grp,
+                                     block3$Resp.Sex,
+                                     block3$Resp.Region))*100,1)
+
+# # --- Wrap this into a matrix for counts of completed interviews
+quotascount3 <- (as.matrix(cbind(quota.count3[,,1], quota.count3[,,2])))
+quotascount3 <- rbind(quotascount3, colSums(quotascount3))
+quotascount3 <- cbind(quotascount3, rowSums(quotascount3))
+rownames(quotascount3) <- c("18-39", "40-64", "Total")
+colnames(quotascount3) <- c("Kinshasa: Women", "Kinshasa: Men", "Nord Kivu: Women", "Nord Kivu: Men", "Total")
+quotascount.tab3 <-quotascount3
+
+colnames(quotascount.tab3) <- c("Women", "Men", "Women", "Men", "Total")
+quotascount.tab3 <- quotascount.tab3 %>%
+  kbl(caption = "Progress to quota - Block 3 (Jun-Jul 2022)") %>%
+  kable_classic(full_width = F, html_font = "Arial")%>%
+  kable_styling(latex_options = 'hold_position')
+add_header_above(quotascount.tab3, c(" " =1 ,"Kinshasa " = 2,"Nord Kivu " = 2 , " "=1))
+```
+
+```{r,  quotasperc3, warning = FALSE, message = FALSE,echo = FALSE}
+# # --- matrix3 = table of % of quota reached
+quotasperc3 <- as.data.frame(quotascount3) %>%
+  dplyr::mutate(quotaKmen = c(300,83,(300+83)),
+                quotaKwomen = c(296,113,(296+113)),
+                quotaNKmen = c(213,102,(213+102)),
+                quotaNKwomen = c(342,54,(342+54)),
+                percKmen = round(`Kinshasa: Men`/quotaKmen*100,2),
+                percKwomen = round(`Kinshasa: Women`/quotaKwomen*100,2),
+                percNKmen = round(`Nord Kivu: Men`/quotaNKmen*100,2),
+                percNKwomen = round(`Nord Kivu: Women`/quotaNKwomen*100,2)) %>%
+  select(c(percKwomen, percKmen, percNKwomen, percNKmen))
+colnames(quotasperc3) <- c(c("Women", "Men", "Women", "Men"))
+
+quotasperc3 <- quotasperc3 %>%
+kbl(caption = "Percent of quota collected - Block 3 (Jun-Jul 2022)") %>%
+  kable_classic(full_width = F, html_font = "Arial") %>%
+  kable_styling(latex_options = 'hold_position')
+add_header_above(quotasperc3, c(" " =1 ,"Kinshasa " = 2,"Nord Kivu " = 2 ))
+```
+
+#### Average phone call duration and average time spent in the CATI application per call
+```{r, timeboxplot, echo=FALSE, message = FALSE,warning = FALSE, fig.height = 4, fig.width = 6, fig.align = "center"}
+# === Interview length
+Duration <- Consented %>%
+  dplyr::select(Total, Elig.Time, Arrangement.Time, Consent.Time,
+         Background.Time, C19.Time, HH.Time,
+         PS.Time, SSH.Time, DB.Time, Phone.duration, Date.Interview, month.interview, phone_call_duration) %>%
+  drop_na(Elig.Time) %>%
+ # dplyr::filter(phone_call_duration <601) %>%
+  dplyr::filter(phone_call_duration !=0 & phone_call_duration !='') %>%
+  dplyr::mutate(Phone.duration = as.numeric(phone_call_duration))
+
+# === Caluclate average phonecall duration
+Duration$`Year-Month` <- format(as.Date(Duration$Date.Interview), "%Y-%m")
+
+Duration_long <- Duration %>%
+  pivot_longer(1:11, names_to = 'module', values_to = 'time') %>%
+  mutate(module = factor(module, levels = c('Total','Elig.Time','Arrangement.Time','Consent.Time','Background.Time','C19.Time','HH.Time','PS.Time','SSH.Time','DB.Time','Phone.duration')),
+         variable = ifelse(module %in% c('Phone.duration', 'Total'), '1', '2')) %>%
+  mutate(min = time/60) 
+
+ggplot(data = subset(Duration_long, ((module == 'Total' | module == 'Phone.duration') & min < 100))) +
+  geom_boxplot(aes(x = module, y = min), fill = '#D95F02', alpha = 0.8) +
+  #geom_boxplot(aes(x = module, y = min), color = '#D95F02', alpha = 0, size =0.5) +
+  theme_minimal() + xlab('') +ylab('Time (min)') +
+  scale_x_discrete(labels = c("Total time\nfor survey", 'Phone call')) +
+  scale_y_continuous(breaks = c(0,10,20,30,40,50,60,70,80,90,100)) 
+
+ggplot(data = subset(Duration_long, ((module == 'Total' | module == 'Phone.duration') & min < 100))) +
+  geom_boxplot(aes(x = module, y = min, fill = `Year-Month`), alpha=0.8) +
+  theme_minimal() + xlab('') +ylab('Time (min)') +
+  scale_x_discrete(labels = c("Total time\nfor survey", 'Phone call')) +
+  scale_y_continuous(breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  scale_fill_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02","#A6761D","#66C2A5", "#666666","#FC8D62",'#540d37','#065535'))#, 
+
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE,fig.height = 5, fig.width = 5, fig.align = "center"}
+## average completed interviews per day by enumerator
+jan <- 21 
+feb <- 20
+mar <- 23
+jun <- 3
+jul <- 22
+aug <- data.frame(date=seq(as.Date('2022-08-01'), Sys.Date(), by ='days')) %>%
+  mutate(day = lubridate::wday(date)) %>%
+  filter(day %in% c(2,3,4,5,6)) 
+aug <- nrow(aug)
+apr <- 15
+dec <- 23#pas de jours feries
+nov <- 22-3
+oct <- 21
+sep <- 22
+aug <- 2
+plot <- Consented %>% 
+  #filter(Outcome.FINAL=='COMP') %>%
+  #distinct(caseid, time) %>%
+  mutate(#month = lubridate::month(time),
+         dayofweek = wday(Date.Interview),
+         weekday = ifelse(dayofweek %in% c(2,3,4,5,6), 1, 0)) %>%
+  group_by(month.interview) %>%
+  summarise(compint = n()) %>%
+  mutate(compintperenum = ifelse(month.interview == 'Jan-22', compint / jan / length(unique(data[data$month.interview=='Jan-22',]$enumerator)),
+                                 ifelse(month.interview == 'Dec-21', compint/dec/length(unique(data[data$month.interview=='Dec-21',]$enumerator)), 
+                                        ifelse(month.interview == 'Nov-21', compint/nov/length(unique(data[data$month.interview=='Nov-21',]$enumerator)),
+                                               ifelse(month.interview == 'Oct-21', compint/oct/length(unique(data[data$month.interview=='Oct-21',]$enumerator)), 
+                                                      ifelse(month.interview == 'Sep-21', compint/sep/length(unique(data[data$month.interview=='Sep-21',]$enumerator)), 
+                                                             ifelse(month.interview =='Aug-21', compint/aug/length(unique(data[data$month.interview=='Aug-21',]$enumerator)), ifelse(month.interview =='Aug-22', compint/aug/length(unique(data[data$month.interview=='Aug-22',]$enumerator)), 
+                                                                    ifelse(month.interview=='Feb-22',compint/feb/length(unique(data[data$month.interview=='Feb-22',]$enumerator)),
+                                                                           ifelse(month.interview =='Mar-22',compint/mar/length(unique(data[data$month.interview=='Mar-22',]$enumerator)),
+                                                                                  ifelse(month.interview =='Apr-22',compint/apr/length(unique(data[data$month.interview=='Apr-22',]$enumerator)), 
+                                                                                         ifelse(month.interview == "May-22", compint/may/length(unique(data[data$month.interview=='May-22',]$enumerator)), ifelse(month.interview == 'Jun-22', compint/jun/length(unique(data[data$month.interview=='Jun-22',]$enumerator)),
+                                                                                                                                                 ifelse(month.interview == 'Jul-22', compint/jul/length(unique(data[data$month.interview=='Jul-22',]$enumerator)), NA))))))))))))),
+         month.interview = factor(month.interview, levels = c('Aug-21','Sep-21','Oct-21','Nov-21','Dec-21','Jan-22','Feb-22','Mar-22','Apr-22', 'May-22','Jun-22', 'Jul-22','Aug-22'))) 
+
+ggplot(data = plot) +
+  geom_line(group = 1, aes(x = month.interview, y = compintperenum), size = 2, color = '#D95F02') + 
+  geom_text(aes(x = month.interview, y = compintperenum, label = round(compintperenum,2), hjust = 1.4, fontface = 'bold')) + 
+  labs(y = 'Average completed interviews per enumerator per day',
+       x = 'Month')
+
+```
+
+### Completed interviews per day per enumerator
+```{r enumeratorstats, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 5, fig.width = 8, fig.align = "center"}
+# --- Obtain vector of counts, cumulative tots and dates for number of interviews per day
+Counts <- aggregate(data.frame(count = Consented$Date.Interview),
+                    by= list(value = Consented$Date.Interview,
+                             enumerator = Consented$enumerator),length) %>%
+  group_by(enumerator) %>%
+  mutate(csum = cumsum(count)) %>% as.data.frame() 
+
+ggplot(data = Counts) +
+  geom_boxplot(aes(x = enumerator, y = count, fill = "#1B9E77"), alpha =0.8) + 
+  scale_y_continuous(name = 'Daily Completed interviews') +
+  scale_x_discrete() +
+  theme(axis.title.y = element_text(color = '#D95F02')) + 
+  theme_minimal() + xlab('Enumerator')+
+    theme(legend.position="none") + 
+  scale_fill_manual(values= c("#1B9E77", "#D95F02"))
+```
+
+## Response Rates
+```{r responserates, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 5, fig.width = 8, fig.align = "center"}
+# --- Create a dataframe of Outcomes by the source, with a counter
+plot.data <- data.frame(Outcome = data$Outcome2,
+                        Source.number = data$Source.number,
+                        date = data$month.interview,
+                        val = 1)
+# --- Collapse data for totals and relative freq of outcomes BY the source from which it was sampled 
+plot.data.S <- plot.data %>%
+  dplyr::group_by(Outcome,Source.number) %>%
+  dplyr::summarise(total = sum(val)) %>%
+  dplyr::group_by(Source.number) %>%
+  dplyr::mutate(rel.freq = (round(100 * (total/sum(total)), 2))) %>% as.data.frame()
+
+
+# --- Collapse data for totals and relative freq of outcomes in the whole data
+plot.data.T <- plot.data %>%
+  dplyr::group_by(Outcome) %>%
+  dplyr::summarise(total = sum(val)) %>%
+  dplyr::mutate(rel.freq = (round(100 * total/sum(total), 2)),
+                Source.number ="Overall") %>% as.data.frame()
+
+
+
+# --- Stick the Source disaggragated ones and total ones together and reorder the factors
+final.plot.data <- rbind(plot.data.T, plot.data.S)
+final.plot.data$Source.number <- factor(final.plot.data$Source.number, levels = c('Overall','Feroxus'))
+final.plot.data <- final.plot.data[!(final.plot.data$Outcome=="missing"),]
+
+final.plot.data$Outcome <- factor(final.plot.data$Outcome,
+                                  levels = c('COMP','PART','REFU','NNU','NNA','NR','INEL','LANG','REASS','DEFER','PEND','OTHER')); final.plot.data <- drop_na(final.plot.data)
+
+
+
+# --- Clean by removing the unneccesary cols
+dat.wide1 <- dplyr::select(dat.wide, -c("pull_IVRprovince_1", "pull_IVRprovince_2", "pull_IVRprovince_3","pull_IVRprovince_4", "pull_IVRprovince_5","pull_label_1", "pull_label_2", "pull_label_3", "pull_label_4","pull_label_5", "enum_1", "enum_2", "enum_3", "enum_4","enum_5", "inel.age_1", "inel.age_2", "inel.age_3", "inel.age_4", "inel.age_5", 'Source.1','Source.prov.1'))
+
+
+# --- In wide form data, create a column of Source of the number by region called Source.number
+dat.wide$Source.number <- dat.wide$Source.1
+
+###########################
+# === Response rate overall
+dat.wide$Counter <- 1
+
+# --- Create separate data frames of the diff samples overall and samples by region
+Ferox <- dat.wide[which(dat.wide$Source.1=="Feroxus"),]
+
+Feroxus.Kin <- dat.wide[which(dat.wide$Source.prov.1=="Feroxus-Kin"),]
+Ferox.NK <- dat.wide[which(dat.wide$Source.prov.1=="Feroxus-NK"),]
+
+# --- Collapse the data frames to obtain the totals by their outcome
+RR.tab <- (data.frame(Number = tapply(dat.wide$Counter, dat.wide$Outcome.FINAL, FUN=sum),Status = rownames(tapply(dat.wide$Counter, dat.wide$Outcome.FINAL, FUN=sum))))
+RR.tab.F <- (data.frame(Number = tapply(Ferox$Counter, Ferox$Outcome.FINAL, FUN=sum),Status = rownames(tapply(Ferox$Counter, Ferox$Outcome.FINAL, FUN=sum))))
+
+RR.tab.Feroxus.Kin <- (data.frame(Number = tapply(Feroxus.Kin$Counter, Feroxus.Kin$Outcome.FINAL, FUN=sum),Status = rownames(tapply(Feroxus.Kin$Counter, Feroxus.Kin$Outcome.FINAL, FUN=sum))))
+RR.tab.Feroxus.NK <- (data.frame(Number = tapply(Ferox.NK$Counter, Ferox.NK$Outcome.FINAL, FUN=sum), Status = rownames(tapply(Ferox.NK$Counter, Ferox.NK$Outcome.FINAL, FUN=sum))))
+
+  # --- Create objects of the response rates by sampling
+RR1 <- RR.tab$Number[which(RR.tab$Status=="COMP")] /sum(RR.tab$Number[which(RR.tab$Status=="COMP" | RR.tab$Status=="PART" |RR.tab$Status=="REFU" | RR.tab$Status=="LANG" |RR.tab$Status=="REASS" | RR.tab$Status=="NR" | RR.tab$Status=="NNA")] )*100
+
+RR1.Feroxus.Kin <- RR.tab.Feroxus.Kin$Number[which(RR.tab.Feroxus.Kin$Status=="COMP")] / sum(RR.tab.Feroxus.Kin$Number[which(RR.tab.Feroxus.Kin$Status=="COMP" | RR.tab.Feroxus.Kin$Status=="PART" |RR.tab.Feroxus.Kin$Status=="REFU" | RR.tab.Feroxus.Kin$Status=="LANG" | RR.tab.Feroxus.Kin$Status=="REASS" | RR.tab.Feroxus.Kin$Status=="NR"| RR.tab.Feroxus.Kin$Status=="NNA")] )*100
+RR1.Feroxus.NK <- RR.tab.Feroxus.NK$Number[which(RR.tab.Feroxus.NK$Status=="COMP")] / sum(RR.tab.Feroxus.NK$Number[which(RR.tab.Feroxus.NK$Status=="COMP" | RR.tab.Feroxus.NK$Status=="PART" |RR.tab.Feroxus.NK$Status=="REFU" | RR.tab.Feroxus.NK$Status=="LANG" |RR.tab.Feroxus.NK$Status=="REASS" | RR.tab.Feroxus.NK$Status=="NR" | RR.tab.Feroxus.NK$Status=="NNA")] )*100
+  
+  # --- Create objects of the REFUSAL rates by sampling
+RefR1 <- RR.tab$Number[which(RR.tab$Status=="REFU")] /sum(RR.tab$Number[which(RR.tab$Status=="COMP" | RR.tab$Status=="PART" |RR.tab$Status=="REFU" | RR.tab$Status=="LANG" |RR.tab$Status=="REASS" | RR.tab$Status=="NR" | RR.tab$Status=="NNA")] )*100
+RefR1.F <- RR.tab.F$Number[which(RR.tab.F$Status=="REFU")] /sum(RR.tab.F$Number[which(RR.tab.F$Status=="COMP" |RR.tab.F$Status=="PART" | RR.tab.F$Status=="REFU" | RR.tab.F$Status=="LANG" |RR.tab.F$Status=="REASS" | RR.tab.F$Status=="NR"| RR.tab.F$Status=="NNA")] )*100
+  
+RefR1.Feroxus.Kin <- RR.tab.Feroxus.Kin$Number[which(RR.tab.Feroxus.Kin$Status=="REFU")] / sum(RR.tab.Feroxus.Kin$Number[which(RR.tab.Feroxus.Kin$Status=="COMP" | RR.tab.Feroxus.Kin$Status=="PART" |RR.tab.Feroxus.Kin$Status=="REFU" | RR.tab.Feroxus.Kin$Status=="LANG" |RR.tab.Feroxus.Kin$Status=="REASS" | RR.tab.Feroxus.Kin$Status=="NR"| RR.tab.Feroxus.Kin$Status=="NNA")] )*100
+RefR1.Feroxus.NK <- RR.tab.Feroxus.NK$Number[which(RR.tab.Feroxus.NK$Status=="REFU")] / sum(RR.tab.Feroxus.NK$Number[which(RR.tab.Feroxus.NK$Status=="COMP" | RR.tab.Feroxus.NK$Status=="PART" |RR.tab.Feroxus.NK$Status=="REFU" | RR.tab.Feroxus.NK$Status=="LANG" |RR.tab.Feroxus.NK$Status=="REASS" | RR.tab.Feroxus.NK$Status=="NR" | RR.tab.Feroxus.NK$Status=="NNA")] )*100
+  
+# === Create a matrix of completed calls (based on the long form data)
+dat.long <- data
+Completedcalls <- plyr::count(dat.long$Outcome2[which(dat.long$Outcome2=="COMP")])$freq
+Lifted <- sum(plyr::count(dat.long$Outcome2[which(dat.long$Outcome2!="NNU" & dat.long$Outcome2!="NR")])$freq)
+
+dat.long$Source.number.cat <- dat.long$Source.prov
+
+# # === Call attempts 
+# Call.attempts <- nrow(dat.long)
+Feroxus.Kin <- dat.long[which(dat.long$Source.number.cat=="Feroxus-Kin"),]; Call.attempts.Feroxus.Kin <- nrow(Feroxus.Kin)
+Feroxus.NK <- dat.long[which(dat.long$Source.number.cat=="Feroxus-NK"),]; Call.attempts.Feroxus.NK <- nrow(Feroxus.NK)
+
+
+
+#n === Table of call attempts and completed calls 
+matrix.cc<- matrix(NA, 2,2); matrix.cc[1,] <- table(dat.long$Source.number.cat)[c(1,2)]
+matrix.cc[2,] <- c(nrow(subset(Consented, Resp.Region =='1')), 
+                   nrow(subset(Consented, Resp.Region == '2')))
+matrix.cc <- cbind(matrix.cc, c(sum(table(dat.long$Source.number.cat)),sum(matrix.cc[2,])))
+rownames(matrix.cc) <- c("Calls placed", "Completed calls")
+colnames(matrix.cc) <- c("Feroxus-Kin", "Feroxus-NK", "Total")
+
+# === Call attempts per completed call
+CPCC <- matrix.cc[1,"Total"]/matrix.cc[2,"Total"]
+CPCC.Ferox <- (matrix.cc[1,"Feroxus-Kin"] + matrix.cc[1,"Feroxus-NK"])/(matrix.cc[2,"Feroxus-Kin"] + matrix.cc[2,"Feroxus-NK"])
+
+CPCC.Ferox.Kin <- matrix.cc[1,"Feroxus-Kin"]/matrix.cc[2,"Feroxus-Kin"]
+CPCC.Ferox.NK <- matrix.cc[1,"Feroxus-NK"]/matrix.cc[2,"Feroxus-NK"]
+
+# === % of numbers with completed CATI
+Perc.comp <- RR.tab$Number[which(RR.tab$Status=="COMP")] / sum(RR.tab$Number) *100
+Perc.comp.Ferox <- RR.tab.F$Number[which(RR.tab.F$Status=="COMP")] / sum(RR.tab.F$Number) *100
+
+Perc.comp.Ferox.Kin <- RR.tab.Feroxus.Kin$Number[which(RR.tab.Feroxus.Kin$Status=="COMP")] / sum(RR.tab.Feroxus.Kin$Number) *100
+Perc.comp.Ferox.NK <- RR.tab.Feroxus.NK$Number[which(RR.tab.Feroxus.NK$Status=="COMP")] / sum(RR.tab.Feroxus.NK$Number) *100
+
+# --- Insert the values into a matrix for presentation - 1st col= Overall; 2nd=Kinshasa; 3rd=NK
+matrix.rates <- matrix(NA, 6, 3)
+matrix.rates[,1] <- c(RR1,
+                      RefR1.F,
+                      CPCC.Ferox,
+                      Perc.comp.Ferox,
+                      sum(matrix.cc[1,1:2]),
+                      sum(matrix.cc[2,1:2])
+                      )
+
+vals <- Consented %>%
+  dplyr::mutate(counter =1) %>%
+  dplyr::group_by(Resp.Region) %>%
+  dplyr::summarise(n=sum(counter)) 
+
+matrix.rates[,2] <- c(RR1.Feroxus.Kin,
+                      RefR1.Feroxus.Kin,
+                      CPCC.Ferox.Kin,
+                      Perc.comp.Ferox.Kin,
+                      matrix.cc[1,1],
+                      matrix.cc[2,1])
+
+matrix.rates[,3] <- c(RR1.Feroxus.NK,
+                      RefR1.Feroxus.NK,
+                      CPCC.Ferox.NK,
+                      Perc.comp.Ferox.NK,
+                      matrix.cc[1,2],
+                      matrix.cc[2,2])
+
+matrix.rates <- round(matrix.rates,2)
+matrix.rates[5:6,] <- as.character(round(matrix.rates[5:6,],1))
+matrix.rates <- as.data.frame(matrix.rates)
+colnames(matrix.rates) <- c("Overall", "Kinshasa", "Nord Kivu")
+# --- reorder the columns and name them/convert to DF
+matrix.rates<- matrix.rates %>%
+  mutate(Statistic = c("Response rate", 
+                       'Refusal rate', 
+                       "Attempts per complete CATI",
+                       "% numbers w/complete CATI",  
+                       "Calls placed", 
+                       "CATIs completed"),
+         Sample = rep(c("Feroxus"),6)) %>%
+  relocate(Statistic, Sample)%>%
+  kbl() %>%
+  kable_classic(full_width = F, html_font = "Arial") %>%
+  footnote("Response Rate = COMP / [COMP+ PART+ REFU + NR (5 attempts) + NNA (5attempts)+ ELIG unknown)]. 
+           Refusal Rate = REFU / [COMP+ PART+ REFU + NR (5 attempts) + NNA (5attempts)+ ELIG unknown)]. Cases where the eligibility of the respondent is unknown may arise, for example, when someone answered the phone but the enumerator could not establish a conversation;    
+           Attempts per complete CATI = Total phone calls made/total completed interviews;    
+           % numbers w/complete CATI = Total phone numbers yielding a complete interview/Total unique phone numbers")  
+#write.csv(matrix.rates,"C:/Users/KellyMcCain/Downloads/matrixrates.csv")
+
+# === Plot of the the Unique phone number outcomes
+# wide.plot.data.S <- dat.wide %>%
+#   dplyr::group_by(Outcome.FINAL,Source.1) %>%
+#   dplyr::summarise(total = sum(Counter)) %>%
+#   dplyr::ungroup() %>%
+#   dplyr::group_by(Source.1) %>%
+#   dplyr::mutate(rel.freq = (round(100 * total/sum(total), 2))) %>% as.data.frame()
+
+wide.plot.data.T <- dat.wide %>%
+  dplyr::group_by(Outcome.FINAL) %>%
+  dplyr::summarise(total = sum(Counter)) %>%
+  dplyr::mutate(rel.freq = (round(100 * total/sum(total), 2))) %>% as.data.frame()
+
+# wide.plot.data.T$Source.1 <- "Overall"
+# wide.plot.data.T <- rbind(wide.plot.data.T, wide.plot.data.S)
+
+wide.plot.data.T$Outcome.FINAL <- factor(wide.plot.data.T$Outcome.FINAL, 
+                                         levels= c("COMP", "PART","REFU","NNA","NR", "NNU","LANG", "INEL",  "PEND",  'DEFER'))
+
+# --- Plot as a bar chart
+wide.plot.data <- wide.plot.data.T %>%
+  mutate(Eligibility = case_when(Outcome.FINAL %in% c('COMP','PART') ~ 'Eligible',
+                              Outcome.FINAL %in% c('INEL','DEFER','NNU') ~ 'Ineligible',
+                              Outcome.FINAL %in% c('REFU','NNA','NR','LANG','PEND') ~ 'Eligibility unknown'),
+         Eligibility = factor(Eligibility, levels = c('Eligible','Ineligible','Eligibility unknown')),
+         Outcome.FINAL = factor(Outcome.FINAL, levels = c('COMP','PART','REFU','NNU','NNA','NR','INEL','LANG','DEFER','PEND','OTHER')))
+Unique.bar <- ggplot(wide.plot.data) +
+  geom_bar(aes(fill=Eligibility, y=rel.freq, x=Outcome.FINAL),position="dodge", stat="identity",alpha = 0.8) +
+  geom_bar(aes(color=Eligibility, y=rel.freq, x=Outcome.FINAL),alpha = 0,size = 1,position="dodge", stat="identity" ) +
+  geom_text(aes(x=Outcome.FINAL, y=rel.freq, label=rel.freq), vjust=1, color="black", size=2.5)+
+  scale_fill_brewer(palette = 'Dark2') +
+  scale_color_brewer(palette = 'Dark2') +
+  # facet_wrap(~Source.1) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, vjust = 0.5, hjust=1, size = 9)) +
+  xlab("")+ ylab("Percent of unique phone numbers") + 
+  labs(caption=paste0("Feroxus = ",sum(wide.plot.data.T$total[wide.plot.data.T$Source.1=='Feroxus'])))
+
+
+# --- Plot as a bar chart 
+Attempt.bar <- final.plot.data %>%
+  mutate(Eligibility = case_when(Outcome %in% c('COMP') ~ 'Eligible',
+                              Outcome %in% c('INEL','DEFER','NNU') ~ 'Ineligible',
+                              Outcome %in% c('REFU','NNA','NR','LANG','REASS') ~ 'Eligibility unknown'),
+         Eligibility = factor(Eligibility, levels = c('Eligible','Ineligible','Eligibility unknown')),
+         Outcome = factor(Outcome, levels = c('COMP','REFU','NNU','NNA','NR','INEL','LANG','REASS','DEFER'))) %>%
+  ggplot() + 
+  geom_bar(aes(fill=Eligibility, y=rel.freq, x=Outcome),position="dodge", stat="identity",alpha = 0.8) +
+  geom_bar(aes(color=Eligibility, y=rel.freq, x=Outcome),alpha = 0,size = 1,position="dodge", stat="identity" ) +
+  scale_fill_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#fb9a99","#66C2A5","#FC8D62", "#8dd3c7",'#a6cee3','#6a3d9a')) +
+  scale_color_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#fb9a99","#66C2A5","#FC8D62", "#8dd3c7",'#a6cee3','#6a3d9a'))+
+  geom_text(aes(x=Outcome, y=rel.freq, label=rel.freq), vjust=1, color="black", size=2.5)+
+  # facet_wrap(~Source.number) +
+  theme_minimal() +
+  theme(legend.position="none",
+        axis.text.x = element_text(angle = 15, vjust = 0.5, hjust=1, size = 7)) +
+  xlab("")+ ylab("Relative frequency of phone calls (%)") + 
+  labs(caption=paste0("\nFeroxus n = ",(matrix.cc[1,2] + matrix.cc[1,1])))
+
+Unique.bar
+
+Attempt.bar
+```
+
+
+```{r, include = FALSE, echo = FALSE, warning = FALSE}
+# Getting audio audits file with the phone_call_durations and adding variables
+# durs <- read_csv("C:/Users/KellyMcCain/OneDrive - London School of Hygiene and Tropical Medicine/Documents/General/Partners/UNIKIN/Review of Audio Recordings/RAMMPS DRC 20_07_WIDE_0607_KMaudioreview.csv")
+# lookup <- data_raw %>% 
+#   filter(call_status ==1) %>%
+#   # mutate(caseid = caseid_original) %>%
+#   select(c(phone_1, users, caseid, call_num, phone_call_duration)) #continue_discontinue, education_level,
+# # vaccine_dose, hd2_b, hd3_b, NumberSistersBrothers_1, NumberSistersBrothers_Bro,
+# # E3, region, E2, E5, E6, E7, E7_b
+# durswtime <- left_join(durs, lookup, by = c('caseid')) %>%
+#   select(c(caseid, users, endtime,phone_1, everything()))
+# write.csv(durswtime, 'C://Users/KellyMcCain/Downloads/RAMMPS DRC 20_07_WIDE_0607_KMaudioreview2.csv', row.names = F)
+```
+
+
+### Household size
+```{r hhsizedensity, echo = FALSE, message = FALSE,warning = FALSE, fig.height = 4, fig.width = 6, fig.align = "center"}
+ggplot(Consented, aes(x=HHsize)) + 
+  geom_histogram(aes(y=..density..), colour="black", fill="#D95F02",binwidth=1)+
+  #facet_wrap(vars(Resp.Region)) +
+  # geom_density(alpha=.2, fill="#FF6666") +
+  xlab("Household size")+ ylab("Density")+
+  theme_minimal() 
+
+```
+
+### Age and sex distribution
+
+```{r respage, warning=FALSE, echo=FALSE, message = FALSE, fig.height = 4, fig.width = 6, fig.align = "center", include=FALSE}
+# === Age and sex pyramid overall and by month
+
+library(DescTools)
+
+pyramid.fo <- function(DATAFRAME) {
+  matrixpyr.Tot <- DATAFRAME %>%
+    group_by(Resp.Age.pyr, Resp.Sex) %>%
+    dplyr::summarize(population = n()) %>%
+    ungroup() %>%
+    group_by(Resp.Sex) %>%
+    dplyr::mutate(npersex = sum(population)) %>%
+    ungroup() %>%
+    mutate(population = ifelse(Resp.Sex == "Male", population*-1, population),
+           relfreq = population/npersex*100, 
+           Group = "Total")
+  
+  Plot <- ggplot(matrixpyr.Tot, aes(x = Resp.Age.pyr, y = relfreq, fill = Resp.Sex)) + 
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Female'), stat = "identity", color= 'black') +
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Male'), stat = "identity", color= 'black') +
+    geom_text(aes(x = Resp.Age.pyr, y = relfreq, label = paste0(abs(round(relfreq, 1)),"%"))) +
+    scale_x_discrete(labels = c('15-19','20-29','30-39','40-49','50-59','60-64')) +
+    coord_flip() + scale_fill_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02","#A6761D","#66C2A5", "#666666","#FC8D62",'#540d37','#065535'))+
+    theme_minimal() + ylab('Relative Frequency of Respondents (%)') + xlab('Respondent Age') +
+    theme(axis.text.x = element_text(angle = 90), legend.title = element_blank()) +
+    ylim(-60,60)+
+    scale_y_continuous(breaks = seq(-100,100,5),
+                       labels = abs(seq(-100,100,5)))
+  return(Plot)
+}
+
+ 
+  matrixpyr.Tot <- Consented %>%
+    group_by(Resp.Age.pyr, Resp.Sex, month.interview) %>%
+    dplyr::summarize(population = n()) %>%
+    dplyr::mutate(npersex = sum(population)/2) %>%
+    ungroup() %>%
+    mutate(population = ifelse(Resp.Sex == "Male", population*-1, population),
+           relfreq = population/sum(npersex)*100, Group = "Total")
+  
+Overall.M <- ggplot(matrixpyr.Tot, aes(x = Resp.Age.pyr, y = relfreq, fill = month.interview)) + 
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Female'), stat = "identity", position='dodge', color= 'black') +
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Male'), stat = "identity", position='dodge', color= 'black') +
+    #geom_text(aes(x = Resp.Age.pyr, y = relfreq, label = paste0(abs(round(relfreq, 1)),"%"))) +
+    scale_x_discrete(labels = c('15-19','20-29','30-39','40-49','50-59','60-64')) +
+    coord_flip() + scale_fill_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02","#A6761D","#66C2A5", "#666666","#FC8D62",'#540d37','#065535'))+
+    theme_minimal() + ylab('Relative Frequency of Respondents (%)') + xlab('Respondent Age') +
+    theme(axis.text.x = element_text(angle = 90)) +
+    labs(fill = "Month of Interview")+
+    ylim(-60,60)+
+    scale_y_continuous(breaks = seq(-100,100,5),
+                       labels = abs(seq(-100,100,5)))
+
+matrixpyr.Tot <- Kin %>%
+    group_by(Resp.Age.pyr, Resp.Sex, month.interview) %>%
+    dplyr::summarize(population = n()) %>%
+    dplyr::mutate(npersex = sum(population)/2) %>%
+    ungroup() %>%
+    mutate(population = ifelse(Resp.Sex == "Male", population*-1, population),
+           relfreq = population/sum(npersex)*100, Group = "Total")
+      
+Kin.M <- ggplot(matrixpyr.Tot, aes(x = Resp.Age.pyr, y = relfreq, fill = month.interview)) + 
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Female'), stat = "identity", position='dodge', color= 'black') +
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Male'), stat = "identity", position='dodge', color= 'black') +
+    #geom_text(aes(x = Resp.Age.pyr, y = relfreq, label = paste0(abs(round(relfreq, 1)),"%"))) +
+    scale_x_discrete(labels = c('15-19','20-29','30-39','40-49','50-59','60-64')) +
+    coord_flip() + scale_fill_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02","#A6761D","#66C2A5", "#666666","#FC8D62",'#540d37','#065535'))+
+    theme_minimal() + ylab('Relative Frequency of Respondents (%)') + xlab('Respondent Age') +
+    theme(axis.text.x = element_text(angle = 90)) +
+    labs(fill = "Month of Interview")+
+    ylim(-60,60)+
+    scale_y_continuous(breaks = seq(-100,100,5),
+                       labels = abs(seq(-100,100,5)))
+
+   
+  matrixpyr.Tot <- NK %>%
+    group_by(Resp.Age.pyr, Resp.Sex, month.interview) %>%
+    dplyr::summarize(population = n()) %>%
+    dplyr::mutate(npersex = sum(population)/2) %>%
+    ungroup() %>%
+    mutate(population = ifelse(Resp.Sex == "Male", population*-1, population),
+           relfreq = population/sum(npersex)*100, Group = "Total")
+  
+NK.M <- ggplot(matrixpyr.Tot, aes(x = Resp.Age.pyr, y = relfreq, fill = month.interview)) + 
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Female'), stat = "identity", position='dodge', color= 'black') +
+    geom_bar(data =subset(matrixpyr.Tot,Resp.Sex == 'Male'), stat = "identity", position='dodge', color= 'black') +
+    #geom_text(aes(x = Resp.Age.pyr, y = relfreq, label = paste0(abs(round(relfreq, 1)),"%"))) +
+    scale_x_discrete(labels = c('15-19','20-29','30-39','40-49','50-59','60-64')) +
+    coord_flip() + 
+  scale_fill_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02","#A6761D","#66C2A5", "#666666","#FC8D62",'#540d37','#065535'))+
+    theme_minimal() + ylab('Relative Frequency of Respondents (%)') + xlab('Respondent Age') +
+    theme(axis.text.x = element_text(angle = 90)) +
+    labs(fill = "Month of Interview")+
+    ylim(-60,60)+
+    scale_y_continuous(breaks = seq(-100,100,5),
+                       labels = abs(seq(-100,100,5)))
+
+
+
+
+```
+
+```{r PYRAMID, warning=FALSE, echo=FALSE, message = FALSE, fig.height = 8, fig.width = 6, fig.align = "center"}
+# === Plot pyramid using grid.arrange
+
+Fig <- ggarrange(pyramid.fo(Consented), 
+                 pyramid.fo(Kin),
+                 pyramid.fo(NK),ncol=1)
+
+annotate_figure(Fig,
+                bottom = text_grob("Top panel=Overall; Middle panel=Kinshasa; Bottom panel=Nord Kivu", color = "black"))
+
+```
+
+
+### Socio-demographic background characteristics of respondents
+
+```{r characteristics, echo=FALSE,  message = FALSE,warning = FALSE}
+# === Table of characteristics
+library("questionr")
+SDT <- function(var1, var2, var3){
+  D1 <- questionr::freq(var1, cum = FALSE,  total = F)[,-3] 
+  D2<- questionr::freq(var2, cum = FALSE,  total = F)[,-3]
+  D3 <- questionr::freq(var3, cum = FALSE,  total = F)[,-3]
+  #D12 <- merge(D1, D2, by=0, all=TRUE)  # merge by row names (by=0 or by="row.names")
+  D <- cbind(D1, D2, D3)
+  #rownames(D12) <- D12$Row.names
+  #D[is.na(D)] <- 0                 # replace NA values
+  #D <- merge(D12, D3, by=0, all=TRUE)  # merge by row names (by=0 or by="row.names")
+  D[is.na(D)] <- 0   #; rownames(D) <- D$Row.names ; D$Row.names <- NULL ; D$Row.names  <- NULL         # replace NA values
+  colnames(D) <- c("Freq", "%", "Freq", "%", "Freq", "%")
+  return(D)
+}
+#re-ordering vars
+#resp education
+Consented$Resp.Educ_lab <- ordered(Consented$Resp.Educ_lab, levels = c("No Education" ,"Primary","Secondary", "Higher", 'Refuse'))
+Kin$Resp.Educ_lab <- ordered(Kin$Resp.Educ_lab, levels = c("No Education" ,"Primary","Secondary", "Higher",'Refuse'))
+NK$Resp.Educ_lab <- ordered(NK$Resp.Educ_lab, levels = c("No Education" ,"Primary","Secondary", "Higher", 'Refuse'))
+#resp marriage
+Consented$Resp.Marriage_lab <- ordered(Consented$Resp.Marriage_lab, levels = c('Never married','Married/Cohabiting','Divorced/Separated','Widowed/(cohabiting) partner passed away','Refuse'))
+Kin$Resp.Marriage_lab <- ordered(Kin$Resp.Marriage_lab, levels = c('Never married','Married/Cohabiting','Divorced/Separated','Widowed/(cohabiting) partner passed away','Refuse'))
+NK$Resp.Marriage_lab <- ordered(NK$Resp.Marriage_lab, levels = c('Never married','Married/Cohabiting','Divorced/Separated','Widowed/(cohabiting) partner passed away','Refuse'))
+#resp residence
+Consented$E4a_lab <- ordered(Consented$E4a_lab, levels = c('City','Town/Trading Centre','Rural','Refuse'))
+Kin$E4a_lab <- ordered(Kin$E4a_lab, levels = c('City','Town/Trading Centre','Rural','Refuse'))
+NK$E4a_lab <- ordered(NK$E4a_lab, levels = c('City','Town/Trading Centre','Rural','Refuse'))
+#resp water
+Consented$water_source_lab <- ordered(Consented$water_source_lab, levels = c('Piped into dwelling','Piped to yard/plot','Public tap','Tubewell/Borehole','Protected well','Unprotected well','Protected spring','Unprotected spring','Rainwater','Bottled water','Cart with small tank','Tank/Drum','Tanker-truck','Surface water','Other','Refuse'))
+Kin$water_source_lab <- ordered(Kin$water_source_lab, levels = c('Piped into dwelling','Piped to yard/plot','Public tap','Tubewell/Borehole','Protected well','Unprotected well','Protected spring','Unprotected spring','Rainwater','Bottled water','Cart with small tank','Tank/Drum','Tanker-truck','Surface water','Other','Refuse'))
+NK$water_source_lab <- ordered(NK$water_source_lab, levels = c('Piped into dwelling','Piped to yard/plot','Public tap','Tubewell/Borehole','Protected well','Unprotected well','Protected spring','Unprotected spring','Rainwater','Bottled water','Cart with small tank','Tank/Drum','Tanker-truck','Surface water','Other','Refuse'))
+
+Des.table <- rbind(SDT(Consented$Resp.Sex, Kin$Resp.Sex, NK$Resp.Sex),
+                   SDT(Consented$Resp.Age.grp_lab, Kin$Resp.Age.grp_lab, NK$Resp.Age.grp_lab),  
+                   SDT(Consented$Resp.Region_lab, Kin$Resp.Region_lab, NK$Resp.Region_lab),
+                   SDT(Consented$Resp.Language, Kin$Resp.Language, NK$Resp.Language), 
+                   SDT(Consented$Resp.Educ_lab, Kin$Resp.Educ_lab, NK$Resp.Educ_lab), 
+                   SDT(Consented[!is.na(Consented$Resp.Marriage_lab),]$Resp.Marriage_lab, Kin[!is.na(Kin$Resp.Marriage_lab),]$Resp.Marriage_lab, NK[!is.na(NK$Resp.Marriage_lab),]$Resp.Marriage_lab),
+                   SDT(Consented$E4a_lab, Kin$E4a_lab, NK$E4a_lab),
+                   SDT(Consented[Consented$electricity_status_lab!="Don't know"&!is.na(Consented$electricity_status_lab),]$electricity_status_lab, 
+                       Kin[Kin$electricity_status_lab!="Don't know"&!is.na(Kin$electricity_status_lab),]$electricity_status_lab,
+                       NK[NK$electricity_status_lab!="Don't know"&!is.na(NK$electricity_status_lab),]$electricity_status_lab),
+                   SDT(Consented[!is.na(Consented$water_source_lab),]$water_source_lab, 
+                       Kin[!is.na(Kin$water_source_lab),]$water_source_lab, 
+                       NK[!is.na(NK$water_source_lab),]$water_source_lab))
+#Des.table <- Des.table[c(1:8,10,11,12,9,13,14,15,17,16, 18,20, 21,19, 22:nrow(Des.table)), ] 
+
+
+Des.table$Categories <- rownames(Des.table)
+Des.table$Variable <- c("Sex", rep(NA, length(unique(Consented$Resp.Sex))-1),
+                        "Age", rep(NA, length(unique(Consented$Resp.Age.grp_lab))-1),
+                        "Region", rep(NA, length(unique(Consented$Resp.Region_lab))-1),
+                        "Language", rep(NA, length(unique(Consented$Resp.Language))-1),
+                        "Education", rep(NA, length(unique(Consented$Resp.Educ_lab))-1),
+                        "Marriage", rep(NA, length(unique(Consented$Resp.Marriage_lab))),
+                        "Residence", rep(NA, 3),
+                        "Electricity", rep(NA, 1),
+                        "Water Source", rep(NA, length(unique(Consented$water_source_lab))))
+Des.table <- Des.table%>%relocate(Variable, Categories) %>%
+  mutate(Categories = ifelse(Categories == 'Refuse1' | Categories == 'Refuse2' | Categories == 'Refuse3'| Categories == 'Refuse4', 'Refuse',Categories),
+         Freq.1 = ifelse(Categories == 'Nord Kivu', 0, Freq.1),
+         `%.1` = ifelse(Categories == 'Nord Kivu', 0 , `%.1`),
+         Freq.2 = ifelse(Categories == 'Kinshasa', 0, Freq.2),
+         `%.2` = ifelse(Categories == 'Kinshasa', 0 , `%.2`)) #%>%
+   #filter(Categories !='Refuse' & Categories %notin% c('Lingala','Swahili'))%>%
+  #select(-c(Freq, Freq.1, Freq.2))
+rownames(Des.table) <- NULL
+Des.table$Variable[is.na(Des.table$Variable)] <- ""
+
+
+
+Des.table.1 <- Des.table %>%
+  kbl(caption = "") %>%
+  kable_classic(full_width = F, html_font = "Arial")%>%
+  kable_styling(latex_options = 'hold_position')
+add_header_above(Des.table.1, c(" "=2, "Total " = 2, "Kinshasa" = 2, "Nord Kivu" = 2))
+
+# Des.table.pres <- Des.table[1:19,]
+# Des.table.pres <- Des.table.pres %>%
+#      kbl(caption = "") %>%
+#      kable_classic(full_width = F, html_font = "Arial")%>%
+#      kable_styling(latex_options = 'hold_position')
+#  
+# add_header_above(Des.table.pres, c(" "=2, "Total " = 1, "Kinshasa" = 1, "Nord Kivu" = 1))
+```
+
+### Number of parent deaths reported in RAMMPS DRC
+```{r parents, warning = FALSE, message = FALSE,echo = FALSE}
+# === Populate a matrix of deaths among siblings and parents
+matrix <- matrix(NA, 4, 4)
+matrix[,1] <-c(sum(Consented$Sis1.Dead, na.rm = T),
+               sum(Consented$Bro1.Dead, na.rm = T),
+               length(which(Consented$M.Dead==2)),
+               length(which(Consented$F.Dead==2)))
+
+matrix[,2] <-c(c(sum(c(Consented$ssh4_yearDied_copy_1_1==2019,Consented$ssh4_yearDied_copy_1_1==2020,Consented$ssh4_yearDied_copy_1_1==2021,
+                       Consented$ssh4_yearDied_copy_1_2==2019,Consented$ssh4_yearDied_copy_1_2==2020,Consented$ssh4_yearDied_copy_1_2==2021,
+                       Consented$ssh4_yearDied_copy_1_3==2019,Consented$ssh4_yearDied_copy_1_3==2020,Consented$ssh4_yearDied_copy_1_3==2021,
+                       Consented$ssh4_yearDied_copy_1_4==2019,Consented$ssh4_yearDied_copy_1_4==2020,Consented$ssh4_yearDied_copy_1_4==2021,
+                       Consented$ssh4_yearDied_copy_1_5==2019,Consented$ssh4_yearDied_copy_1_5==2020,Consented$ssh4_yearDied_copy_1_5==2021), na.rm=T)),
+               c(sum(c(Consented$ssh4_yearDied_bro_1==2019,Consented$ssh4_yearDied_bro_1==2020,Consented$ssh4_yearDied_bro_1==2021,
+                       Consented$ssh4_yearDied_bro_2==2019,Consented$ssh4_yearDied_bro_2==2020,Consented$ssh4_yearDied_bro_2==2021,
+                       Consented$ssh4_yearDied_bro_3==2019,Consented$ssh4_yearDied_bro_3==2020,Consented$ssh4_yearDied_bro_3==2021,
+                       Consented$ssh4_yearDied_bro_4==2019,Consented$ssh4_yearDied_bro_4==2020,Consented$ssh4_yearDied_bro_4==2021,
+                       Consented$ssh4_yearDied_bro_5==2019,Consented$ssh4_yearDied_bro_5==2020,Consented$ssh4_yearDied_bro_5==2021,
+                       Consented$ssh4_yearDied_bro_6==2019,Consented$ssh4_yearDied_bro_6==2020,Consented$ssh4_yearDied_bro_6==2021), na.rm=T)),
+               length(which(Consented$M.dead.Yr>2018 & Consented$M.dead.Yr<=2022)),
+               length(which(Consented$F.dead.Yr>2018 & Consented$F.dead.Yr<=2022)))
+
+matrix[,3] <- c(table(is.na((Consented[which(Consented$M.Dead=="2"),])$M.dead.Age))[2],table(is.na((Consented[which(Consented$F.Dead=="2"),])$F.dead.Age))[2])
+
+matrix[,4] <- c(table(is.na((Consented[which(Consented$M.Dead==2 & Consented$M.dead.Yr>2018 & Consented$M.dead.Yr<=2022),])$M.dead.Age))[2],table(is.na((Consented[which(Consented$F.Dead==2 & Consented$F.dead.Yr>2018 & Consented$F.dead.Yr<=2022),])$F.dead.Age))[2])
+
+rownames(matrix) <- c("Sisters", "Brothers","Mothers", "Fathers")
+colnames(matrix) <- c("Deaths", "Deaths since 2019", "Missing age at death", "Missing age at death (since 2019)")
+
+Sibling.parent <- matrix
+Sibling.parent[c(3,4),] %>%
+  kbl() %>%
+  kable_classic(full_width = F, html_font = "Arial")
+
+
+```  
+
+### Proportion of respondents with a deceased parent by respondent's province
+```{r moretables, warning = FALSE, message = FALSE,echo = FALSE,fig.height = 4, fig.width = 6, fig.align = "center"}
+# === Proportion of total sample, and regions with a mother and father deceassed
+matrix <- matrix(NA, 2, 3)
+matrix[,1] <- c(round((length(which(Consented$M.Dead==2)) / nrow(Consented))*100,1),
+                round((length(which(Consented$F.Dead==2)) / nrow(Consented))*100,1))
+matrix[,2] <- c(round((length(which(Kin$M.Dead==2)) / nrow(Kin))*100,1),
+                round((length(which(Kin$F.Dead==2)) / nrow(Kin))*100,1))
+matrix[,3] <- c(round((length(which(NK$M.Dead==2)) / nrow(NK))*100,1),
+                round((length(which(NK$F.Dead==2)) / nrow(NK))*100,1))
+colnames(matrix) <- c("Overall", "Kinshasa", "Nord Kivu")
+rownames(matrix) <- c("Mothers", "Fathers")
+
+Prov.plot1 <- ggplot(melt(matrix), aes(x=X2, y=value, group=X1, fill=X1)) +
+  geom_bar(stat="identity", position="dodge", color= 'black') +#, alpha = 0.4
+  xlab("Province") + ylab("Proportion with deceased parent") +
+  scale_fill_brewer(palette = 'Dark2')+
+  #scale_fill_manual(values = c('darkred','darkblue'))+
+  theme(legend.title = element_blank())+
+  theme() + coord_flip()
+Prov.plot1
+```
+
+### Proportion of surviving parents by age group of respondent
+```{r, echo = FALSE, fig.height = 5, fig.width = 7, fig.align = "center"}
+Age.M <- Consented$Resp.Age.pyr; Age.F <- Consented$Resp.Age.pyr
+Father <- Consented$F.alive.age ;Mother <- Consented$M.alive.age
+
+percparentssurv <- cbind(Consented %>%
+                           group_by(Resp.Age.pyr) %>%
+                           dplyr::summarize(Resp.Age.pyr_n = n()) %>%
+                           select(-Resp.Age.pyr),
+                         Consented %>%
+                           select(Resp.Age.pyr, Resp.Age, M.Dead) %>%
+                           filter(M.Dead ==1) %>%# filtering to those with surviving mother
+                           group_by(Resp.Age.pyr) %>%
+                           dplyr::summarize(n.M.Alive = n()) ,
+                         Consented %>%
+                           select(Resp.Age.pyr, Resp.Age, F.Dead) %>%
+                           dplyr::rename(Resp.Age.pyr2 = Resp.Age.pyr) %>%
+                           filter(F.Dead ==1) %>%# filtering to those with surviving father
+                           group_by(Resp.Age.pyr2) %>%
+                           dplyr::summarize(n.F.Alive = n())
+) %>%
+  select(-Resp.Age.pyr2) %>%
+  mutate(perc.M.alive = n.M.Alive / Resp.Age.pyr_n,
+         perc.F.alive = n.F.Alive / Resp.Age.pyr_n)
+
+ggplot(data = percparentssurv) +
+  geom_line(aes(x = Resp.Age.pyr, y = perc.M.alive, color = 'Mother'), group = 1,size = 1) + 
+  geom_line(aes(x = Resp.Age.pyr, y = perc.F.alive, color = 'Father'), group = 1, size = 1) + 
+  theme_minimal() +
+  scale_x_discrete(name ='Respondent Age category', labels = c("15-19", "20-29",'30-39','40-49','50-59','60-64')) +
+  scale_y_continuous(name ='Proportion with alive parent') +
+  scale_colour_manual("", breaks = c("Mother", "Father"),
+                      values = c("#1B9E77", "#D95F02"))
+                      #values=c('darkred','darkblue'))
+
+```
+
+### Total number of brothers, sisters and total siblings by respondent's province and sex
+
+```{r, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 4, fig.width = 6, fig.align = "center"}
+# === Total number of brothers, sisters and total siblings by repsondent's sex
+Sex.ssh <- data.frame(Bro.Sis = Consented$Brothers + Consented$Sisters,
+                      Brother = Consented$Brothers,
+                      Sister = Consented$Sisters,
+                      Sex = Consented$Resp.Sex) %>% 
+  group_by(Sex) %>%
+  dplyr::summarize(Siblings = sum(Bro.Sis, na.rm = T),
+                   Sisters = sum(Sister, na.rm = T),
+                   Brothers = sum(Brother, na.rm = T))
+Sex.ssh <- melt(as.data.frame(Sex.ssh))
+
+PlotA <- ggplot(Sex.ssh, aes(x=variable, y=value, group=Sex, fill = Sex)) +
+  geom_bar(stat="identity", position = "dodge", color= 'black') +
+  theme_minimal() + xlab("Siblings") + ylab("Number of siblings reported by sex of respondent") +
+  theme(legend.position = "bottom") +
+  coord_flip() +
+  scale_fill_brewer(palette = 'Dark2')
+PlotA
+```
+
+```{r, echo = FALSE, message = FALSE, warning=FALSE , fig.height = 4, fig.width = 6, fig.align = "center"}
+# === Total number of brothers, sisters and total siblings by respondent's province
+Province.ssh <- data.frame(Bro.Sis = Consented$Brothers + Consented$Sisters,
+                           Brother = Consented$Brothers,
+                           Sister = Consented$Sisters,
+                           Province = Consented$Resp.Region)
+Province.ssh <- Province.ssh %>%
+  group_by(Province) %>%
+  dplyr::summarize(Siblings = sum(Bro.Sis, na.rm = T),
+                   Sisters = sum(Sister, na.rm = T),
+                   Brothers = sum(Brother, na.rm = T))
+Province.ssh <- reshape::melt(as.data.frame(Province.ssh))[-c(1:2),]
+Province.ssh$Province <- rep(c("Kinshasa", "Nord Kivu"), 3)
+PlotB <- ggplot(Province.ssh, aes(x=variable, y=value, group=Province, fill = Province)) +
+  geom_bar(stat="identity", position = "dodge", color='black') +
+  theme_minimal() + xlab("Siblings") + ylab("Number of siblings reported by province") +
+  theme(legend.position = "bottom") +
+  coord_flip()+ scale_fill_brewer(palette = 'Dark2') 
+PlotB
+```
+
+### Proportion of deceased siblings by respondent age   
+```{r, echo = FALSE, fig.height = 4, fig.width = 8, fig.align = "center"}
+Sis.D <- data.frame(Dead = Consented$Sis1.Dead,
+                    Number = Consented$Sisters,
+                    Age = Consented$agegp, Sibling="Sister")
+Sis.D<- Sis.D %>% 
+  dplyr::group_by(Age) %>%
+  dplyr::summarise(D=sum(Dead, na.rm=T),
+                   No = sum(Number, na.rm=T)) %>%
+  dplyr::mutate(Prop = round((D/No)*100,2))%>%
+  dplyr::mutate(Sibling = "Sister")
+
+
+
+Bro.D <- data.frame(Dead = Consented$Bro1.Dead,
+                    Number = Consented$Brothers,
+                    Age = Consented$agegp, Sibling="Brother")
+
+Bro.D <- Bro.D %>% 
+  dplyr::group_by(Age) %>%
+  dplyr::summarise(D=sum(Dead, na.rm=T),
+                   No = sum(Number, na.rm=T)) %>%
+  dplyr::mutate(Prop = round((D/No)*100,2))%>%
+  dplyr::mutate(Sibling = "Brother")
+
+
+sis.bro.D <- rbind(Bro.D, Sis.D)
+
+ggplot() +
+  geom_line(data = subset(sis.bro.D, Sibling=="Sister"), aes(x = Age, y = Prop), group = 1,size = 1, color="darkgreen") + 
+  geom_line(data = subset(sis.bro.D, Sibling=="Brother"), aes(x = Age, y = Prop), group = 1,size = 1, color="darkorange") + 
+  theme_minimal() +
+  scale_x_discrete(name ='Respondent Age category', labels = c("15-29",'30-39','40-49','50-59','60-64')) +
+  scale_y_continuous(name ='Proportion with deceased sibling') +
+  scale_colour_manual("", breaks = c("Mother", "Father"),
+                      values = c("#1B9E77", "#D95F02"))
+
+
+```
+
+
+```{r,warning=FALSE, message = FALSE,echo=FALSE, include = FALSE}
+# === Vax status of respondents - create subdata to facilitate making following graphs/tables
+vax <- Consented %>%
+  select(c(Vaccine.Dose, Vaccine.Likelihood, Vaccine.Name, Vaccine.Den.Reasons, Other.Den.Reasons, Vaccine.Yes.Reasons, Other.Yes.Reasons, Resp.Age, Resp.Age.pyr, Resp.Age.grp,Resp.Sex, Resp.Region, vaccines_den_reasons_1,vaccines_den_reasons_2,vaccines_den_reasons_3,vaccines_den_reasons_4,vaccines_den_reasons_5,vaccines_den_reasons_6,vaccines_den_reasons_7,vaccines_den_reasons_8,vaccines_den_reasons_9,vaccines_den_reasons_10,vaccines_den_reasons_11,vaccines_den_reasons_12,vaccines_den_reasons_13,vaccines_den_reasons_14,vaccines_yes_reasons_1,vaccines_yes_reasons_2,vaccines_yes_reasons_3,vaccines_yes_reasons_4,vaccines_yes_reasons_7,vaccines_yes_reasons_8,vaccines_yes_reasons_9,vaccines_yes_reasons_11,vaccines_yes_reasons_12,vaccines_yes_reasons_13, month.interview)) %>% 
+  mutate(Resp.Region = case_when(Resp.Region == 1 ~ 'Kinshasa', 
+                                 Resp.Region == 2 ~ 'Nord Kivu', 
+                                 Resp.Region == 3 ~ 'Other', 
+                                 Resp.Region == 4~ "Don't Know"))
+#vaccines_yes_reasons_5,vaccines_yes_reasons_6
+```
+
+### Percentage of respondents by vaccine status
+``` {r, warning=FALSE, echo=FALSE, message = FALSE, fig.height = 4, fig.width = 6, fig.align = "center"}
+# === Vaccination by dose and name
+vax$Vaccine.Dose <- ordered(vax$Vaccine.Dose, levels = c("Refuse","Two Doses","One Dose", "No vaccine" ,  "Don't Know"))
+
+vaxname <- vax %>%
+  group_by(Vaccine.Dose) %>%
+  dplyr::summarize(num = n()) %>%
+  filter(!is.na(Vaccine.Dose)) %>%
+  mutate(num = round(num,0)) %>%
+  mutate(perc = round(num/sum(num)*100,1))%>%
+  ggplot() +
+  geom_bar(aes(x=Vaccine.Dose, y=perc, fill=Vaccine.Dose), stat="identity", position='dodge', color='black') +
+  geom_text(aes(x=Vaccine.Dose, y=perc, label=paste0(perc,'%')), hjust = .55)+
+  theme_minimal() +
+  xlab("Vaccine status") +
+  ylab("% of respondents") +
+  theme(legend.title = element_blank())+
+  theme() + coord_flip() +
+  scale_fill_brewer(palette = "Dark2")
+vaxname
+
+
+```
+
+
+
+### Vaccination coverage (>= 1 dose) by age, sex and province
+```{r vaxdemo, warning = FALSE, echo = FALSE, message = FALSE, fig.height = 4, fig.width = 8, fig.align = "center"}
+# === Plot of vaccine 1 dose or 2 by age, sex and region
+vax_plot <- rbind(vax %>%
+                    mutate(Vaccine.Dose = ifelse(Vaccine.Dose == 'One Dose'|Vaccine.Dose =='Two Doses', 'Vaccine',Vaccine.Dose)) %>%
+                    group_by(Vaccine.Dose, Resp.Age.pyr) %>%
+                    dplyr::summarize(n = n()) %>%
+                    dplyr::rename(level1 = Resp.Age.pyr)%>%
+                    group_by(level1) %>%
+                    mutate(Perc= round((n /sum(n))*100,1)),
+                  vax %>%
+                    mutate(Vaccine.Dose = ifelse(Vaccine.Dose == 'One Dose'|Vaccine.Dose =='Two Doses', 'Vaccine',Vaccine.Dose)) %>%
+                    group_by(Vaccine.Dose, Resp.Sex) %>%
+                    dplyr::summarize(n = n()) %>%
+                    dplyr::rename(level1 = Resp.Sex)%>%
+                    group_by(level1) %>%
+                    mutate(Perc= round((n /sum(n))*100,1)),
+                  vax %>%
+                    mutate(Vaccine.Dose = ifelse(Vaccine.Dose == 'One Dose'|Vaccine.Dose =='Two Doses', 'Vaccine',Vaccine.Dose)) %>%
+                    group_by(Vaccine.Dose, Resp.Region) %>%
+                    dplyr::summarize(n = n()) %>%
+                    dplyr::rename(level1 = Resp.Region) %>%
+                    group_by(level1) %>%
+                    mutate(Perc= round((n /sum(n))*100,1))) %>%
+  mutate(level1 = factor(level1, levels=c("(14,19]", "(19,29]",'(29,39]','(39,49]','(49,59]','(59,64]', 'Female','Male','Kinshasa', 'Nord Kivu',   'Other')),
+         Vaccine.Dose = factor(Vaccine.Dose, levels = c('Vaccine', 'No vaccine', "Don't Know",'Refuse')),
+         variable = ifelse(level1 %in% c("(14,19]", "(19,29]",'(29,39]','(39,49]','(49,59]','(59,64]'), 'Age group',
+                           ifelse(level1 %in% c('Male','Female'), 'Sex',
+                                  ifelse(level1 %in% c('Nord Kivu','Kinshasa','Other'), 'Province',NA))))
+
+vax_plot1 <- subset(vax_plot, (Vaccine.Dose=="Vaccine"))
+
+G1 <- ggplot(data = subset(vax_plot1, variable == 'Age group')) +
+  geom_bar(aes(x = level1, y = Perc), color='black', fill = "#1B9E77" ,stat = 'identity') +
+  geom_text(aes(x = level1, y = Perc, label = paste0(n, "(",Perc,"%)")), vjust = 1) +
+  theme_minimal() +
+  #facet_grid(.~variable,scales = 'free_x',space = 'free_x',switch = 'x') +
+  ylab('% Respondents') + xlab('Age') +
+  scale_x_discrete(labels = c("15-19", "20-29",'30-39','40-49','50-59','60-64')) +
+  theme(strip.placement = 'outside', legend.title = element_blank())+
+  scale_fill_brewer(palette = "Dark2")
+G2 <- ggplot(data = subset(vax_plot1, variable == 'Sex')) +
+  geom_bar(aes(x = level1, y = Perc), color='black', fill = '#D95F02' ,stat = 'identity') +
+  geom_text(aes(x = level1, y = Perc, label = paste0(n, "(",Perc,"%)")), vjust = 1) +
+  theme_minimal() +
+  #facet_grid(.~variable,scales = 'free_x',space = 'free_x',switch = 'x') +
+  ylab('% Respondents') + xlab('Sex') +
+  scale_x_discrete(labels = c('Female','Male')) +
+  theme(strip.placement = 'outside', legend.title = element_blank())+
+  scale_fill_brewer(palette = "Dark2")
+G3 <- ggplot(data = subset(vax_plot1, variable == 'Province')) +
+  geom_bar(aes(x = level1, y = Perc), color='black', fill = '#7570B3' ,stat = 'identity') +
+  geom_text(aes(x = level1, y = Perc, label = paste0(n, "(",Perc,"%)")), vjust = 1) +
+  theme_minimal() +
+  #facet_grid(.~variable,scales = 'free_x',space = 'free_x',switch = 'x') +
+  ylab('% Respondents') + xlab('Province') +
+  scale_x_discrete(labels = c('Kinshasa','Nord Kivu')) +
+  theme(strip.placement = 'outside', legend.title = element_blank())+
+  scale_fill_brewer(palette = "Dark2")
+ggarrange(G1, G2, G3, nrow=1)
+```
+  
+### Vaccination coverage (>= 1 dose) by month
+```{r, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 5, fig.width = 8, fig.align = "center"}
+library(tidyr)
+library(broom)
+library(ggrepel)
+vaxbymonthplot <- vax %>%
+                    group_by(Vaccine.Dose, month.interview) %>%
+                    dplyr::summarize(n = n()) %>%
+                    ungroup() %>%
+                    group_by(month.interview) %>%
+  mutate(total = sum(n),
+         cumtotal_bymonth = cumsum(n)) %>%
+  filter(Vaccine.Dose %in% c('One Dose','Two Doses')) %>%
+  summarise(n = sum(n),
+            total = total) %>% distinct() %>% ungroup() %>%
+  mutate(cumtotal = cumsum(total),
+         cumvax = cumsum(n),
+         perc = cumvax/cumtotal*100) %>%
+  mutate(
+    # month.interview = ifelse(month.interview == 'August','Aug-21',
+    #                                                 ifelse(month.interview=='September','Sep-21',
+    #                                                        ifelse(month.interview == 'October','Oct-21',
+    #                                                               ifelse(month.interview == 'November','Nov-21',
+    #                                                                      ifelse(month.interview == 'December','Dec-21',
+    #                                                                             ifelse(month.interview=="January",'Jan-22',
+    #                                                                                    ifelse(month.interview =='February','Feb-22',
+    #                                                                                           ifelse(month.interview =='March','Mar-22',
+    #                                                                                                  ifelse(month.interview =='April','Apr-22',
+    #                                                                                                         ifelse(month.interview == 'May','May-22',ifelse(month.interview=='June','Jun-22',
+    #                                                                                                                                                         ifelse(month.interview == 'July', 'Jul-22',NA)))))))))))),
+                           month.interview = factor(month.interview, levels = c('Aug-21','Sep-21','Oct-21','Nov-21','Dec-21','Jan-22','Feb-22','Mar-22', 'Apr-22','May-22','Jun-22','Jul-22','Aug-22')))  
+new <- vaxbymonthplot %>%
+  group_by(month.interview) %>%
+     rowwise %>%
+      summarise(out = list(prop.test(cumvax, cumtotal) %>%
+             tidy)) %>%
+      ungroup %>%
+      unnest() %>% mutate(estimate = round(estimate*100, 2),
+                        conf.low = round(conf.low*100,2),
+                        conf.high = round(conf.high*100,2),
+                        country = 'DRC')
+ggplot(data = new) + 
+  geom_ribbon(aes(group = 1,x = as.factor(month.interview), ymin=conf.low, ymax = conf.high), alpha = 0.2)+
+  geom_line(aes(x = as.factor(month.interview), y = estimate), group =1,color = '#7570B3', size = 1.5) +
+  geom_text_repel(aes(x = as.numeric(month.interview), y = estimate, label = paste0(estimate,"%\n[", conf.low, ", ", conf.high,"]")),size=2.8) +
+  theme_minimal() + 
+  ylab('% Respondents') +
+  xlab('Month') +
+  scale_x_discrete(labels = c('8' = 'Aug-21', '9' ='Sep-21','10' ='Oct-21','11' ='Nov-21','12'='Dec-21','1'='Jan-22','2'='Feb-22','3'='Mar-22', '4'='Apr-22','5'='May-22','6'='Jun-22','7'='Jul-22'))+
+  labs(title = 'Vaccination coverage (>= 1 dose) by month')
+```
+  
+### Vaccination coverage (>= 1 dose) by month and province 
+```{r, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 5, fig.width = 8, fig.align = "center"}
+library(tidyr)
+library(broom)
+library(ggrepel)
+vaxbymonthplot <- vax %>%
+                    group_by(Vaccine.Dose, Resp.Region, month.interview) %>%
+                    dplyr::summarize(n = n()) %>%
+                    ungroup() %>%
+                    group_by(Resp.Region, month.interview) %>%
+  mutate(total = sum(n),
+         cumtotal_bymonthandprov = cumsum(n)) %>%
+  filter(Vaccine.Dose %in% c('One Dose','Two Doses')) %>%
+  summarise(n = sum(n),
+            total = total) %>% distinct() %>% ungroup() %>%
+  group_by(Resp.Region) %>%
+  mutate(cumtotal = cumsum(total),
+         cumvax = cumsum(n),
+         perc = cumvax/cumtotal*100) %>%
+  mutate(
+    # month.interview = ifelse(month.interview == 'August','Aug-21',
+    #                                                 ifelse(month.interview=='September','Sep-21',
+    #                                                        ifelse(month.interview == 'October','Oct-21',
+    #                                                               ifelse(month.interview == 'November','Nov-21',
+    #                                                                      ifelse(month.interview == 'December','Dec-21',
+    #                                                                             ifelse(month.interview=="January",'Jan-22',
+    #                                                                                    ifelse(month.interview =='February','Feb-22',
+    #                                                                                           ifelse(month.interview =='March','Mar-22',
+    #                                                                                                  ifelse(month.interview =='April','Apr-22',
+    #                                                                                                         ifelse(month.interview == 'May','May-22',ifelse(month.interview=='June','Jun-22',
+    #                                                                                                                                                         ifelse(month.interview == 'July', 'Jul-22',NA)))))))))))),
+                           month.interview = factor(month.interview, levels = c('Aug-21','Sep-21','Oct-21','Nov-21','Dec-21','Jan-22','Feb-22','Mar-22', 'Apr-22','May-22','Jun-22','Jul-22','Aug-22')))  
+new <- vaxbymonthplot %>%
+  group_by(Resp.Region, month.interview) %>%
+     rowwise %>%
+      summarise(out = list(prop.test(cumvax, cumtotal) %>%
+             tidy)) %>%
+      ungroup %>%
+      unnest %>% mutate(estimate = round(estimate*100, 1),
+                        conf.low = round(conf.low*100,1),
+                        conf.high = round(conf.high*100,1),
+                        country = 'DRC')
+ggplot(data = new) + 
+  geom_ribbon(aes(group = Resp.Region,x = as.factor(month.interview), ymin=conf.low, ymax = conf.high), alpha = 0.2)+
+  geom_line(aes(x = as.factor(month.interview), y = estimate, group =Resp.Region,color = Resp.Region), size = 1.5) +
+  geom_text_repel(aes(x = as.numeric(month.interview), y = estimate, label = paste0(estimate,"%\n[", conf.low, ", ", conf.high,"]")),size=2.8)+
+  theme_minimal() + 
+  ylab('% Respondents') +
+  xlab('Month') +
+  scale_x_discrete(labels = c('8' = 'Aug-21', '9' ='Sep-21','10' ='Oct-21','11' ='Nov-21','12'='Dec-21','1'='Jan-22','2'='Feb-22','3'='Mar-22', '4'='Apr-22','5'='May-22','6'='Jun-22','7'='Jul-22'))+
+  scale_color_brewer(palette = 'Dark2') +
+  labs(title = 'Vaccination coverage (>= 1 dose) by month and province')
+```
+
+### Living parents of respondents by COVID-19 vaccination status
+```{r, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 5, fig.width = 8, fig.align = "center"}
+# === Living parents of respondents by COVID-19 vaccination status
+# --- Get table of % those who are alive by their jab status (row 1= M and row=F)
+Jab.stat <- rbind(table((subset(Consented, M.Dead==1))$ps4_parents_jab_1),
+                  table(subset(Consented, F.Dead==1)$ps4_parents_jab2_1))
+Jab.stat <- round(Jab.stat/rowSums(Jab.stat)*100, 2)
+rownames(Jab.stat) <- c("Mother", "Father")
+colnames(Jab.stat) <- c("No", "One dose", "Two doses", "Don't know", 'Refuse')
+Jab.stat<- as.data.frame(Jab.stat)
+
+Jab.stat %>%
+  kbl(caption = "") %>%
+  kable_classic(full_width = F, html_font = "Arial")
+
+```
+
+```{r, atleast1, eval = FALSE, message = FALSE,warning=FALSE, echo=FALSE}
+# === Respondents with at least one dose of the COVID-19 vaccine (with row percentages)
+atleast1 <- vax %>%
+  filter(Vaccine.Dose %in% c('One Dose','Two Doses'))
+countvax <- table(atleast1$Resp.Age.pyr, atleast1$Resp.Sex, atleast1$Resp.Region)
+percvax <- round((prop.table(countvax,1))*100,2)
+
+# ---  Obtain counts and percentages, drop into matrix and plot
+countvax1 <- cbind(countvax[,,1], percvax[,,1]); countvax1 <- rbind(countvax1, c(colSums(countvax1)[1:2], "", ""))
+countvax2 <- cbind(countvax[,,2], percvax[,,2]); countvax2 <- rbind(countvax2, c(colSums(countvax2)[1:2], "", ""))
+
+matrixvax <- cbind(countvax1, countvax2)
+rownames(matrixvax) <- c("15-19", "20-29",'30-39','40-49','50-59','60-64', "Total")
+matrixvax <- cbind(matrixvax[,1], matrixvax[,3], matrixvax[,2], matrixvax[,4],
+                   matrixvax[,5], matrixvax[,7], matrixvax[,6], matrixvax[,8])
+colnames(matrixvax) <- c("Kinshasa: Men", '%',"Kinshasa: Women",'%', "Nord Kivu: Men", '%',"Nord Kivu: Women",'%')
+
+matrixvaxtbl <- matrixvax %>%
+  kbl(caption = "Respondents with at least one dose of the COVID-19 vaccine (with row percentages)") %>%
+  kable_classic(full_width = F, html_font = "Arial") %>%kable_styling(latex_options = 'hold_position')
+
+matrixvaxtbl
+```
+
+### Likelihood of taking the COVID-19 vaccine if offered by province
+```{r, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+NK.v <- as.data.frame(table(NK$Vaccine.Likelihood)); NK.v$Region<- "NK"
+Kin.v <- as.data.frame(table(Kin$Vaccine.Likelihood)); Kin.v$Region<- "Kinshasa"
+Drc.v <- as.data.frame(table(Consented$Vaccine.Likelihood)); Drc.v$Region<- "Overall"
+
+Vax.offered <- rbind(Drc.v,Kin.v, NK.v) %>%
+  mutate(Likelihood = case_when(Var1 ==1 ~ "Yes, definitely", Var1 ==2 ~ "Likely", Var1 ==3 ~ "Unlikely", Var1 ==4 ~ "Definitely not", Var1 ==5 ~ "Prefer not to say", Var1 ==6 ~ "Reclassified as unlikely")) %>%
+  transform(Percent = ave(Freq, Region, FUN = prop.table)) %>%
+  mutate(Percent = round(Percent*100,1),
+         Likelihood=factor(Likelihood, levels = c('Prefer not to say', 'Reclassified as unlikely', 'Definitely not','Unlikely','Likely','Yes, definitely'))) %>% ggplot(aes(x=Likelihood, y=Percent, group=Region, fill=Region)) +
+  geom_bar(aes(fill=Region), stat="identity", position='dodge', color='black') +
+  theme_minimal() +
+  xlab("Likelihood of taking vaccine if offered") +
+  ylab("% of unvaccinated respondents") +
+  theme(legend.title = element_blank())+
+  theme() + coord_flip() +
+  scale_fill_brewer(palette = "Dark2")
+
+Vax.offered
+```
+
+### Likelihood of taking the COVID-19 vaccine if offered overall
+```{r, warning = FALSE, message = FALSE,echo = FALSE, fig.height = 4, fig.width = 7, fig.align = "center"}
+# === Bar of Likelihood of taking the COVID-19 
+NK <- NK %>% mutate(VaxLikelihood=case_when(Vaccine.Likelihood ==1 ~ "Yes, definitely", Vaccine.Likelihood ==2 ~ "Likely", Vaccine.Likelihood ==3|Vaccine.Likelihood==4|Vaccine.Likelihood==5|Vaccine.Likelihood==6~ "Hesitant"))
+Kin <- Kin %>% mutate(VaxLikelihood=case_when(Vaccine.Likelihood ==1 ~ "Yes, definitely", Vaccine.Likelihood ==2 ~ "Likely", Vaccine.Likelihood ==3|Vaccine.Likelihood==4|Vaccine.Likelihood==5|Vaccine.Likelihood==6~ "Hesitant"))
+Consented <- Consented %>% mutate(VaxLikelihood=case_when(Vaccine.Likelihood ==1 ~ "Yes, definitely", Vaccine.Likelihood ==2 ~ "Likely", Vaccine.Likelihood ==3|Vaccine.Likelihood==4|Vaccine.Likelihood==5|Vaccine.Likelihood==6~ "Hesitant"))
+NK.v <- as.data.frame(table(NK$VaxLikelihood)); NK.v$Region<- "NK"
+Kin.v <- as.data.frame(table(Kin$VaxLikelihood)); Kin.v$Region<- "Kinshasa"
+Drc.v <- as.data.frame(table(Consented$VaxLikelihood)); Drc.v$Region<- "Overall"
+# === Bar of Likelihood of taking the COVID-19 vaccine
+Vax.offeredoverall <- rbind(Drc.v,Kin.v, NK.v) %>%
+  #mutate(Likelihood = case_when(Var1 ==1 ~ "Yes, definitely", Var1 ==2 ~ "Likely", Var1 ==3|Var1==4|Var1==5|Var1==6~ "Hesitant")) %>%
+  transform(Percent = ave(Freq, Region, FUN = prop.table)) %>%
+  mutate(Percent = round(Percent*100,1),
+         VaxLikelihood=factor(Var1, levels = c('Hesitant','Likely','Yes, definitely'))
+         ) %>% 
+  filter(Region == 'Overall') %>%
+  ggplot(aes(x=VaxLikelihood, y=Percent)) +
+  geom_bar(aes(fill = Region),stat="identity", position='dodge', color='black') +
+  geom_text(aes(x=VaxLikelihood, y=Percent, label = paste0(Percent,'%'))) +
+  theme_minimal() +
+  xlab("Likelihood of taking vaccine if offered") +
+  ylab("% of unvaccinated respondents") +
+  theme(legend.title = element_blank())+
+  theme() + coord_flip() +
+  scale_fill_brewer(palette = "Dark2")+
+  theme(legend.position = "none")
+
+Vax.offeredoverall
+```
+
+### Reasons for vaccine hesitancy
+```{r,hesitancywhy, warning=FALSE, echo = FALSE, message=FALSE, fig.height = 7, fig.width = 8, fig.align = "center"}
+# === Examine reasons for vaccine hesitancy 
+number2 <- sum(!is.na(Consented$Vaccine.Den.Reasons))
+
+Reasons <- data.frame( Number = c(sum(Consented$vaccines_den_reasons_1, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_2, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_3, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_4, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_5, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_6, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_7, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_8, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_9, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_10, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_11, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_12, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_17, na.rm = T),
+                                  sum(Consented$vaccines_den_reasons_18, na.rm = T),
+                                  #sum(Consented$vaccines_den_reasons_Rumeur, na.rm=T),
+                                  #sum(Consented$vaccines_den_reasons_Info, na.rm=T),
+                                  #sum(Consented$vaccines_den_reasons_Pregnant, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_15, na.rm = T),
+                                 sum(Consented$vaccines_den_reasons_16, na.rm = T),
+                                 sum(Consented$vaccines_den_reasons_19, na.rm = T),
+                                 sum(Consented$vaccines_den_reasons_20, na.rm = T),
+                                 # sum(Consented$vaccines_den_reasons_Pointless, na.rm=T),
+                                 # sum(Consented$vaccines_den_reasons_Confidence, na.rm=T),
+                                  sum(Consented$vaccines_den_reasons_13, na.rm=T),
+                                 sum(Consented$vaccines_den_reasons_14, na.rm=T)
+                                  ))
+
+# Rename to get clear labels
+Reasons <- Reasons %>%
+  mutate(Reason = c("Already had COVID-19 and believe I am immune",
+                    "Vaccine is not effective",
+                    "Vaccine is not safe/causes harm/side effects/fear of vaccine",
+                    "May get COVID-19 from the vaccine",
+                    "Religious objections/traditional beliefs (specify)",
+                    "Chance of contracting COVID-19 is small",
+                    "COVID-19 is not serious or life threatening (for me)",
+                    "Allergic to vaccines",
+                    "Don't like needles",
+                    "Wait until others have been vaccinated first",
+                    "There will be other effective treatments soon",
+                    "Does not want vaccine on offer, will wait for another vaccine",
+                    "Lack of information on the vaccine",
+                    "Currently pregnant",
+                    'Long distance to travel for vaccination',
+                    'Vaccine is too expensive',
+                    'No consent from family, parents, or spouse',
+                    'Protect myself in other ways (gestes barrieres, other medications)',
+                    "Other",
+                    "None/Dont know"),
+         Percentage = round((Number/number2)*100,1))
+   
+ggplot(data = Reasons, aes(x=Reason, y=Percentage)) +
+  geom_bar(stat="identity", fill="#D95F02", color='black') +
+  theme_minimal() +
+  xlab("Reasons") +
+  ylab("% of respondents who report hesitancy to\n take the COVID-19 vaccine") +
+  theme(legend.title = element_blank())+
+  theme() + coord_flip() 
+
+```
