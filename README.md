@@ -9,7 +9,7 @@ Final scripts used for the RaMMPS project
 5. **enumerator_stats.R**: enumerator analyses divided into respondent characteristics sex and place of residence e.g. daily completed interviews, CATI outcomes by enumerator, enumeratory daily time on phone. 
 6. **referrals.R**: analysing the referrals. Looking at 'REFER' call outcomes and CATI outcomes and responses from eligibility questions to create flowchart. 
 
-# Cleanred scripts
+# Cleaned scripts
 
 The cleaned and labelled scripts given in the same order as the uncleaned scripts are below:
 1. **response_rates.R**
